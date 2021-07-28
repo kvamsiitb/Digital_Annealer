@@ -9,6 +9,7 @@ This repo contains code to find the configuration of the spins such that Ising H
 
 ## Code Structure
 This repo contains 
+
 	- annealer_gpu_SI
 	- bin_SI
 	- build(generated later)
@@ -21,6 +22,7 @@ executable has cmdline feature to provide different options for help cmd use "an
 First copy the J_matrix text file in bin_SI folder
 
 Open anneal.cmd file 
+	
 	- In line 25, only update this line "pw01_1000_1.txt -x 14.4 -y 0.001 -n 16000 -m 1 -d" and remaining everything remains the same.
 	- for example if ur J_matrix is abc_XYZ.txt use the cmdline option "-a ../bin_SI/abc_XYZ.txt -d" then the debug files are generated in build folder
 	- qsub anneal.cmd
