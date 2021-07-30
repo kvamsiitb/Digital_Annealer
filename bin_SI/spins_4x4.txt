@@ -1,0 +1,6 @@
+1	-1	-1	-1	-1	-1	-1	1	-1	-1	1	1	-1	1	1	-1	
+
+
+	best energy value: -6950.000000
+	best max cut value: 10.000000
+ 	elapsed time in sec: 0.323481
