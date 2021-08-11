@@ -94,6 +94,7 @@ __global__ void init_best_energy(float* total_energy, float* best_energy, bool i
 
 // Initialize lattice spins
 __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+	float* gpuLinTermsVect,
 	const float* __restrict__ randvals,
 	signed char* gpuSpins,
 	signed char* gpuSpins_1,
@@ -104,6 +105,7 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 	unsigned long seed);
 
 __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+	float* gpuLinTermsVect,
 	const float* __restrict__ randvals,
 	signed char* gpuLatSpin,
 	signed char* gpuLatSpin_1,
@@ -200,41 +202,49 @@ int main(int argc, char* argv[])
 {
 
   std::string filename = "";//argv[1]
+  std::string linear_file;
+
   float start_temp = 20.f;
   float stop_temp = 0.001f;
-	unsigned long long seed = ((getpid()* rand()) & 0x7FFFFFFFF); //((GetCurrentProcessId()* rand()) & 0x7FFFFFFFF);
+  unsigned long long seed = ((getpid()* rand()) & 0x7FFFFFFFF); //((GetCurrentProcessId()* rand()) & 0x7FFFFFFFF);
   
   unsigned int num_temps = 1000; //atoi(argv[2]);
-	unsigned int num_sweeps_per_beta = 1;//atoi(argv[3]);
+  unsigned int num_sweeps_per_beta = 1;//atoi(argv[3]);
 	
  
   bool write = false;
   bool debug = false;
- 	std::cout << "Start parsing the file " << std::endl;
+  
+
+  std::cout << "Start parsing the file " << std::endl;
 
   while (1) {
 		static struct option long_options[] = {
-      {     "J_Matrix_file", required_argument, 0, 'a'},
+			{     "J_Matrix_file", required_argument, 0, 'a'},
+			{ "Linear_file", required_argument, 0, 'l' },
+
 			{     "start_temp", required_argument, 0, 'x'},
 			{     "stop_temp", required_argument, 0, 'y'},
 			{          "seed", required_argument, 0, 's'},
 			{        "niters", required_argument, 0, 'n'},
 			{ "sweeps_per_beta", required_argument, 0, 'm'},
 			{ "write-lattice",       no_argument, 0, 'o'},
-      {          "debug",       no_argument, 0, 'd'},
+			{          "debug",       no_argument, 0, 'd'},
 			{          "help",       no_argument, 0, 'h'},
 			{               0,                 0, 0,   0}
 		};
 
 		int option_index = 0;
-		int ch = getopt_long(argc, argv, "a:x:y:s:n:m:odh", long_options, &option_index);
+		int ch = getopt_long(argc, argv, "a:l:x:y:s:n:m:odh", long_options, &option_index);
 		if (ch == -1) break;
 
 		switch (ch) {
 		case 0:
 			break;
-   case 'a':
+		case 'a':
 			filename = (optarg); break;
+		case 'l':
+			linear_file = (optarg); break;
 		case 'x':
 			start_temp = atof(optarg); break;
 		case 'y':
@@ -260,24 +270,29 @@ int main(int argc, char* argv[])
 		}
 	}
 
-std::cout << "filename " << filename << " start temp " << start_temp << " stop temp " << stop_temp << " seed " << seed << " num temp " << num_temps << " num sweeps " <<  num_sweeps_per_beta << std::endl;
+    std::cout << "filename " << filename << " linear filename " << linear_file << " start temp " << start_temp << " stop temp " << stop_temp << " seed " << seed << " num temp " << num_temps << " num sweeps " <<  num_sweeps_per_beta << std::endl;
 	std::vector<float> adjMat;// float
  	double starttime = rtclock();
 	ParseData parseData(filename, adjMat);
-	
+
+	std::vector<float> linearTermsVect;
+	if (linear_file.empty() == false)
+		parseData.readLinearValues(linear_file, linearTermsVect);
+
 	double endtime = rtclock();
   
-  if(debug)
-  	printtime("ParseData time: ", starttime, endtime);
+    if(debug)
+  	  printtime("ParseData time: ", starttime, endtime);
 
 	unsigned int adj_mat_size = adjMat.size();
 	auto graphs_data = parseData.getDataDims();//sqrt(adjMat.size());
 	unsigned int num_spins = graphs_data.at(0);
 	unsigned int CPU_THREADS = THREADS;//(num_spins < 32) ? num_spins : 32; 
+
 //	cudaMemcpyToSymbol( &THREADS, &CPU_THREADS, sizeof(unsigned int));
 	// Setup cuRAND generator
 	
-  std::cout << "adj_mat_size: " << adj_mat_size << " num_spins: " << num_spins << " num of temperature "<< num_temps << " num_sweeps per beta "<< num_sweeps_per_beta << std::endl;
+    std::cout << "adj_mat_size: " << adj_mat_size << " num_spins: " << num_spins << " num of temperature "<< num_temps << " num_sweeps per beta "<< num_sweeps_per_beta << std::endl;
 	curandGenerator_t rng;
 	
 	curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_PHILOX4_32_10);
@@ -285,6 +300,13 @@ std::cout << "filename " << filename << " start temp " << start_temp << " stop t
 	float *gpu_randvals;// same as spins
 	gpuErrchk(cudaMalloc((void**)&gpu_randvals, (num_spins) * sizeof(float)));
 
+	float *gpuLinTermsVect;
+	gpuErrchk(cudaMalloc((void**)&gpuLinTermsVect, (num_spins) * sizeof(float)));
+
+	if (linearTermsVect.size() != num_spins)
+		std::cout << "	[ERROR] error in parsing the linear terms from file" << std::endl;
+
+	gpuErrchk(cudaMemcpy(gpuLinTermsVect, linearTermsVect.data(), (num_spins) * sizeof(float), cudaMemcpyHostToDevice));
 
 	float *gpuAdjMat;
 	gpuErrchk(cudaMalloc((void**)&gpuAdjMat, (adj_mat_size) * sizeof(float)));
@@ -377,6 +399,7 @@ std::cout << "filename " << filename << " start temp " << start_temp << " stop t
    starttime = rtclock();
 
 	init_spins_total_energy << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
+		gpuLinTermsVect,
 		gpu_randvals,
 		gpu_spins,
 		gpu_spins_1,
@@ -438,6 +461,7 @@ std::cout << "filename " << filename << " start temp " << start_temp << " stop t
         cudaEventRecord(start); 
    }
       	alter_spin << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
+				gpuLinTermsVect,
       			gpu_randvals,
       			gpu_spins,
       			gpu_spins_1,
@@ -624,6 +648,7 @@ if(debug)
 
 #if CORRECT
 __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+	float* gpuLinTermsVect,
 	const float* __restrict__ randvals,
 	signed char* gpuLatSpin,
 	signed char* gpuLatSpin_1,
@@ -693,11 +718,11 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	  float vertice_change_energy = 0.f;
 	  vertice_change_energy =  sh_mem_spins_Energy[0];
 	   
-    float change_in_energy = - 2.f * vertice_change_energy * current_spin_shared_mem; // final energy - current energy
+    float change_in_energy = - 2.f * ( vertice_change_energy + gpuLinTermsVect[vertice_Id] ) * current_spin_shared_mem; // final energy - current energy
   
     if(change_in_energy < 0)
     {
-      		float acceptance_ratio = exp(- 2.f * beta * vertice_change_energy * current_spin_shared_mem);
+      		float acceptance_ratio = exp(- 2.f * beta * (vertice_change_energy + gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
       		if (randvals[vertice_Id] < acceptance_ratio) // low temp
       		{  
       			if (dev_select_spin_arr[0] % 2 == 0)
@@ -716,7 +741,7 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
     } 
    	else {
     
-       		float acceptance_ratio = exp(2.f * beta * vertice_change_energy * current_spin_shared_mem);
+       		float acceptance_ratio = exp(2.f * beta * (vertice_change_energy + gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
       		if (randvals[vertice_Id] < acceptance_ratio)// change is good and low temp
       		{   
       			if (dev_select_spin_arr[0] % 2 == 0)
@@ -746,6 +771,7 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 
 // Initialize lattice spins
 __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+	float* gpuLinTermsVect,
 	const float* __restrict__ randvals,
 	signed char* gpuSpins,
 	signed char* gpuSpins_1,
@@ -799,7 +825,7 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 
 	if (p_Id == 0)
 	{
- 	float vertice_energy;
+ 		float vertice_energy;
  /*
 		for (int i = 0; i < THREADS; i++)
 		{
@@ -807,7 +833,7 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 		}
  */
  
-		vertice_energy *= ((float)gpuSpins[vertice_Id]) * sh_mem_spins_Energy[0];
+		vertice_energy *= ((float)gpuSpins[vertice_Id]) * ( sh_mem_spins_Energy[0] - gpuLinTermsVect[vertice_Id] );
 		hamiltonian_per_spin[vertice_Id] = vertice_energy;// each threadblock updates its own memory location
 
 //		printf("vertice_energy  %f \n", vertice_energy);
@@ -819,6 +845,7 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 
 
 // Initialize lattice spins
+// [ERROR] No Linear term added
 __global__ void preprocess_max_cut_from_ising(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	signed char* gpuSpins,
 	const unsigned int* gpu_num_spins,
