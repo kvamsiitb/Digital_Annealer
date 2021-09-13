@@ -92,17 +92,19 @@ void ParseData::readData(string data, std::vector<float>& adjMat)
 	
 	std::istringstream input;
 	input.str(data);
-	std::vector<int> line_data;//@R std::vector<float> line_data;
+	std::vector<std::string> line_data;//@R std::vector<float> line_data;
 	for (std::string line; std::getline(input, line, ' '); ) {
      //std::cout << line << std::endl;
-		line_data.push_back(std::stoi(line));
+		line_data.push_back(line);
 	}
 	if (line_data.size() == 3)
 	{
 		//std::cout << line_data.size() << std::endl;
 	    //std::cout << line_data.at(0) <<  " " << line_data.at(1) << " " << line_data.at(2) << std::endl;
 		//std::this_thread::sleep_for(std::chrono::seconds(1));
-		adjMat[(_data_dims.at(0) * (line_data.at(0) - 1)) + (line_data.at(1) - 1)] = line_data.at(2);
+		int first_entry= std::stoi(line_data.at(0));
+		int sec_entry = std::stoi(line_data.at(1));
+		adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = stof(line_data.at(2) );
 		//std::cout << adjMat[_data_dims.at(0)*(line_data.at(0) - 1) + (line_data.at(1) - 1)] << std::endl;
 	}
 }
