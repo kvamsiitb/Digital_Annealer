@@ -57,7 +57,7 @@ void ParseData::readLinearValues(const string filename, std::vector<float>& line
 			input.str(row_line);
 
 			for (std::string line; std::getline(input, line, ' '); ) {
-				linearVect.push_back(std::stoi(line));
+				linearVect.push_back(std::stof(line));
 			}
 
 		}
