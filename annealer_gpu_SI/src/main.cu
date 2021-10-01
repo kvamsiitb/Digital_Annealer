@@ -711,7 +711,7 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
             			else
             				gpuLatSpin[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
     			        __threadfence();
-                  atomicAdd(total_energy, change_in_energy);
+                  atomicAdd(total_energy, (-1.f * change_in_energy) );
              } 
     } 
    	else {
@@ -724,7 +724,7 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
       			else
       				gpuLatSpin[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
       			__threadfence();    
-      			atomicAdd(total_energy, change_in_energy);
+      			atomicAdd(total_energy, (-1.f * change_in_energy) );
       		}      
             	else {
           			if (dev_select_spin_arr[0] % 2 == 0)
