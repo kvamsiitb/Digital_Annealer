@@ -104,6 +104,14 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 	curandState * state,
 	unsigned long seed);
 
+// fINAL lattice spins
+__global__ void final_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+       float* gpuLinTermsVect,
+       signed char* gpuSpins,
+       const unsigned int* gpu_num_spins,
+       float* hamiltonian_per_spin,
+       float* total_energy);
+
 __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	float* gpuLinTermsVect,
 	const float* __restrict__ randvals,
@@ -113,7 +121,6 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	float* hamiltonian_per_spin,
 	const float beta,
 	float* total_energy,
-	float* best_energy,
 	curandState* globalState,
 	unsigned int* dev_select_spin_arr,
   clock_t *timer);
@@ -469,7 +476,6 @@ int main(int argc, char* argv[])
       			gpu_hamiltonian_per_spin,
       			beta_schedule.at(i),
       			gpu_total_energy,
-      			gpu_best_energy,
       			devRanStates,
       			gpu_select_spin_arr,
             dtimer);
@@ -561,8 +567,17 @@ if(debug)
 	gpu_max_cut_value[0] = 0.f;
 	gpu_plus_one_spin[0] = 0;
 	gpu_minus_one_spin[0] = 0;
+  gpu_total_energy[0] = 0.f;
    if(gpu_select_spin_arr[0]%2 == 0)	
    {
+
+    final_spins_total_energy << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
+                        gpuLinTermsVect,
+                        gpu_spins_1,
+                        gpu_num_spins,
+                        gpu_hamiltonian_per_spin,
+                        gpu_total_energy);
+
     preprocess_max_cut_from_ising << < num_spins, THREADS >> > (gpuAdjMat,
   				gpu_adj_mat_size,
   				gpu_spins_1,
@@ -576,6 +591,14 @@ if(debug)
     }    
    else	
    {
+
+       final_spins_total_energy << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
+                        gpuLinTermsVect,
+                        gpu_spins,
+                        gpu_num_spins,
+                        gpu_hamiltonian_per_spin,
+                        gpu_total_energy);
+
        preprocess_max_cut_from_ising << < num_spins, THREADS >> > (gpuAdjMat,
   				gpu_adj_mat_size,
   				gpu_spins,
@@ -618,13 +641,14 @@ if(debug)
 
   }  
   fprintf(fptr1,"\n\n\n");
-  fprintf(fptr1,"\tbest energy value: %.6f\n", gpu_best_energy[0] );
+  //fprintf(fptr1,"\tbest energy value: %.6f\n", gpu_best_energy[0] );
+  fprintf(fptr1,"\ttotal energy value: %.6f\n", gpu_total_energy[0] );
   fprintf(fptr1,"\tbest max cut value: %.6f\n", gpu_best_max_cut_value[0]);
 	fprintf(fptr1," \telapsed time in sec: %.6f\n", duration * 1e-6 );
   fclose(fptr1);
   
  }
-	std::cout << "\tbest energy value: " << gpu_best_energy[0] << std::endl;
+	std::cout << "\ttotal energy value: " << gpu_total_energy[0] << std::endl;
 	std::cout << "\tbest max cut value: " << gpu_best_max_cut_value[0] << std::endl;
 	std::cout << "\telapsed time in sec: " << duration * 1e-6 << std::endl;
  
@@ -656,7 +680,6 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	float* hamiltonian_per_spin,
 	const float beta,
 	float* total_energy,
-	float* best_energy,
 	curandState* globalState,
 	unsigned int* dev_select_spin_arr,
   clock_t *timer) {
@@ -825,15 +848,8 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 
 	if (p_Id == 0)
 	{
- 		float vertice_energy;
- /*
-		for (int i = 0; i < THREADS; i++)
-		{
-			vertice_energy += sh_mem_spins_Energy[i];
-		}
- */
  
-		vertice_energy *= ((float)gpuSpins[vertice_Id]) * ( sh_mem_spins_Energy[0] - gpuLinTermsVect[vertice_Id] );
+		float vertice_energy = ((float)gpuSpins[vertice_Id]) * ( sh_mem_spins_Energy[0] - gpuLinTermsVect[vertice_Id] );
 		hamiltonian_per_spin[vertice_Id] = vertice_energy;// each threadblock updates its own memory location
 
 //		printf("vertice_energy  %f \n", vertice_energy);
@@ -843,6 +859,58 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 	//        printf("%d total %.1f",blockIdx.x, total_energy);
 }
 
+// fINAL lattice spins
+__global__ void final_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+	float* gpuLinTermsVect,
+	signed char* gpuSpins,
+	const unsigned int* gpu_num_spins,
+	float* hamiltonian_per_spin,
+	float* total_energy) {
+
+	unsigned int vertice_Id = blockIdx.x; // actual spin id in this threadBlock
+	unsigned int p_Id = threadIdx.x;// which worker id
+
+	__shared__ float sh_mem_spins_Energy[THREADS];
+	sh_mem_spins_Energy[p_Id] = 0;
+	__syncthreads();
+
+	unsigned int stride_jump_each_vertice = sqrt((float)gpuAdjMatSize[0]);
+	unsigned int num_spins = gpu_num_spins[0];
+	int num_iter = (num_spins + THREADS - 1) / THREADS;
+
+	// num_iter data chucks 
+	for (int i = 0; i < num_iter; i++)
+	{
+		// p_Id (worker group)
+		if (p_Id + i * THREADS < num_spins)
+		{
+			// @R  (- 1.f ) * gpuAdjMat * gpuSpins  // https://editor.mergely.com/
+			sh_mem_spins_Energy[p_Id] += (-1.f) * gpuAdjMat[p_Id + (i * THREADS) + (vertice_Id * stride_jump_each_vertice)] * ((float)gpuSpins[p_Id + i * THREADS]);
+		}
+	}
+	__syncthreads();
+
+
+	for (int off = blockDim.x / 2; off; off /= 2) {
+		if (threadIdx.x < off) {
+			sh_mem_spins_Energy[threadIdx.x] += sh_mem_spins_Energy[threadIdx.x + off];
+		}
+		__syncthreads();
+	}
+
+
+	if (p_Id == 0)
+	{
+
+		float vertice_energy = ((float)gpuSpins[vertice_Id]) * ( sh_mem_spins_Energy[0] - gpuLinTermsVect[vertice_Id] );
+		hamiltonian_per_spin[vertice_Id] = vertice_energy;// each threadblock updates its own memory location
+
+		//printf("vertice_energy  %d %f \n",vertice_Id, vertice_energy);
+		atomicAdd(total_energy, vertice_energy);
+	}
+
+	//        printf("%d total %.1f",blockIdx.x, total_energy);
+}
 
 // Initialize lattice spins
 // [ERROR] No Linear term added
