@@ -738,14 +738,13 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	if (p_Id == 0)
 	{
   
-	  float vertice_change_energy = 0.f;
-	  vertice_change_energy =  sh_mem_spins_Energy[0];
+	  float vertice_change_energy = -1.f * sh_mem_spins_Energy[0];
 	   
-    float change_in_energy = - 2.f * ( vertice_change_energy + gpuLinTermsVect[vertice_Id] ) * current_spin_shared_mem; // final energy - current energy
+    float change_in_energy = - 2.f * ( vertice_change_energy - gpuLinTermsVect[vertice_Id] ) * current_spin_shared_mem; // final energy - current energy
   
     if(change_in_energy < 0)
     {
-      		float acceptance_ratio = exp(- 2.f * beta * (vertice_change_energy + gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
+      		float acceptance_ratio = exp(- 2.f * beta * (vertice_change_energy - gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
       		if (randvals[vertice_Id] < acceptance_ratio) // low temp
       		{  
       			if (dev_select_spin_arr[0] % 2 == 0)
@@ -764,7 +763,7 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
     } 
    	else {
     
-       		float acceptance_ratio = exp(2.f * beta * (vertice_change_energy + gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
+       		float acceptance_ratio = exp(2.f * beta * (vertice_change_energy - gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
       		if (randvals[vertice_Id] < acceptance_ratio)// change is good and low temp
       		{   
       			if (dev_select_spin_arr[0] % 2 == 0)
