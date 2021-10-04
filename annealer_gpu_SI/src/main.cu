@@ -710,14 +710,13 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	if (p_Id == 0)
 	{
   
-	  float vertice_change_energy = 0.f;
-	  vertice_change_energy =  sh_mem_spins_Energy[0];
+	  float vertice_change_energy = - 1.f * sh_mem_spins_Energy[0];
 	   
     float change_in_energy = - 2.f * vertice_change_energy * current_spin_shared_mem; // final energy - current energy
 
-    if(change_in_energy < 0)
+    if(change_in_energy > 0)
     {
-      		float acceptance_ratio = exp(- 2.f * beta * vertice_change_energy * current_spin_shared_mem);
+      		float acceptance_ratio = exp( 2.f * beta * vertice_change_energy * current_spin_shared_mem);
       		if (randvals[vertice_Id] < acceptance_ratio) // low temp
       		{  
       			if (dev_select_spin_arr[0] % 2 == 0)
@@ -731,12 +730,12 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
             			else
             				gpuLatSpin[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
     			        __threadfence();
-                  atomicAdd(total_energy, (-1.f * change_in_energy) );
+                  atomicAdd(total_energy, (change_in_energy) );
              } 
     } 
    	else {
     
-       		float acceptance_ratio = exp(2.f * beta * vertice_change_energy * current_spin_shared_mem);
+       		float acceptance_ratio = exp( -2.f * beta * vertice_change_energy * current_spin_shared_mem);
       		if (randvals[vertice_Id] < acceptance_ratio)// change is good and low temp
       		{   
       			if (dev_select_spin_arr[0] % 2 == 0)
@@ -744,7 +743,7 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
       			else
       				gpuLatSpin[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
       			__threadfence();    
-      			atomicAdd(total_energy, (-1.f * change_in_energy) );
+      			atomicAdd(total_energy, (change_in_energy) );
       		}      
             	else {
           			if (dev_select_spin_arr[0] % 2 == 0)
@@ -816,7 +815,7 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
    __syncthreads();
    }
  
-
+  __syncthreads(); 
 	if (p_Id == 0)
 	{
  
@@ -868,14 +867,14 @@ __global__ void final_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjM
 		__syncthreads();
 	}
 
-
+  __syncthreads();
 	if (p_Id == 0)
 	{
 
 		float vertice_energy = ((float)gpuSpins[vertice_Id]) * sh_mem_spins_Energy[0];
 		hamiltonian_per_spin[vertice_Id] = vertice_energy;// each threadblock updates its own memory location
 
-		printf("vertice_energy  %d %f \n",vertice_Id, vertice_energy);
+		//printf("vertice_energy  %d %f \n",vertice_Id, vertice_energy);
 		atomicAdd(total_energy, vertice_energy);
 	}
 
