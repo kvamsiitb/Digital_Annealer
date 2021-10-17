@@ -18,8 +18,7 @@ Desc: Parse Jij matrix
 
 #include <sys/time.h>
 
-#define STANDARDIMP 1
-#define MH 0
+
 using std::string;
 
 double rtclock();
@@ -49,7 +48,7 @@ void printVecOfVec(std::vector<float> adjMat);
 std::vector<double> create_beta_schedule_linear(uint32_t num_sweeps, double beta_start, double beta_end = 0.001f);
 float avgMagnetisation(const std::vector<signed char>& spinVec, float temp);
 void initializeSpinVec(std::vector<signed char>& spinVec);
-void changeInLocalEnePerSpin(const std::vector<float>& adjMat, std::vector<float>& linearTermsVect, unsigned int adj_mat_size,
+void changeInLocalEnePerSpin(const std::vector<float>& adjMat, unsigned int adj_mat_size,
                              const std::vector<signed char>& spinVec, unsigned int num_spins, 
                              std::vector<float>& localEnergyPerSpin, 
                              unsigned int spinIdx);
@@ -58,7 +57,7 @@ void updateMetropolisHasting(std::vector<signed char>& spinVec, unsigned int num
                              const std::vector<float>& localEnergyPerSpin, 
                              unsigned int spinIdx, float beta);
 
-float partialMaxCut(const std::vector<float>& adjMat, std::vector<float>& linearTermsVect, unsigned int adj_mat_size,
+float partialMaxCut(const std::vector<float>& adjMat, unsigned int adj_mat_size,
                              const std::vector<signed char>& spinVec, unsigned int num_spins,  
                              unsigned int spinIdx);
 void debugSpinVal(std::vector<signed char>& spinVec);  
@@ -73,19 +72,7 @@ void updateMetropolisHasting(std::vector<signed char>& spinVec, unsigned int num
 	  static std::mt19937 gen(rd());
     static std::uniform_real_distribution<> dist(0, 1);
     
-#if MH
-    
-    float prob_ratio = exp( -1.f * beta * ( localEnergyPerSpin[spinIdx] ) );// exp(- (E_f - E_i ) / T)
-    float acceptance_probability = std::min( (float)1.f, prob_ratio);
 
-      // H(new_spin) - H(old_spin) = - 2 * S * s_i
- 
-      float randval = dist(gen);
-      if (randval >= acceptance_probability ) {
-        spinVec[spinIdx] = (signed char)(-1 * (int)spinVec[spinIdx] );
-      }
-#endif
-#if STANDARDIMP
     if(localEnergyPerSpin[spinIdx] > 0)
     {
         float acceptance_probability =  exp( -1.f * beta * ( localEnergyPerSpin[spinIdx] ) );
@@ -104,10 +91,10 @@ void updateMetropolisHasting(std::vector<signed char>& spinVec, unsigned int num
            spinVec[spinIdx] = (signed char)(-1 * (int)spinVec[spinIdx] );
         }      
     }
-#endif
+
             
 }
-void changeInLocalEnePerSpin(const std::vector<float>& adjMat, std::vector<float>& linearTermsVect, unsigned int adj_mat_size,
+void changeInLocalEnePerSpin(const std::vector<float>& adjMat, unsigned int adj_mat_size,
                              const std::vector<signed char>& spinVec, unsigned int num_spins, 
                              std::vector<float>& localEnergyPerSpin, 
                              unsigned int spinIdx)
@@ -118,8 +105,7 @@ void changeInLocalEnePerSpin(const std::vector<float>& adjMat, std::vector<float
       changeInEnergy += -1.f * adjMat[num_spins * spinIdx + index] * (float)spinVec[index]; // S = - \sum Jij[] s[j] - h[i]
     }
     
-    changeInEnergy += -1.f * linearTermsVect[spinIdx]; 
-    
+       
     // changeInEnergy(i.e. (E_f - E_i ) ) = S * -1 * s[i] - S * s[i] = -2 * S * s[i] 
     changeInEnergy = -2.f * changeInEnergy * (float)spinVec[spinIdx];
     localEnergyPerSpin[spinIdx] = changeInEnergy;
@@ -139,7 +125,7 @@ float avgMagnetisation(const std::vector<signed char>& spinVec, float temp)
  return avg_magnet;
 }
 
-float partialMaxCut(const std::vector<float>& adjMat, std::vector<float>& linearTermsVect, unsigned int adj_mat_size,
+float partialMaxCut(const std::vector<float>& adjMat, unsigned int adj_mat_size,
                              const std::vector<signed char>& spinVec, unsigned int num_spins,  
                              unsigned int spinIdx)
 {

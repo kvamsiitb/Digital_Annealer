@@ -17,7 +17,7 @@ int main(int argc, char** argv)
 	  int num_temps = 35;
     float startTemp = 2.9f;
      
-    if(argc!=6)
+    if(argc!=5)
     {
         // ./ising_cpu num_sweeps_per_beta startTemp num_temps adj_mat linear_mat    
         printf("error in the code");
@@ -29,16 +29,11 @@ int main(int argc, char** argv)
   num_temps = atoi(argv[2]);
   num_sweeps_per_beta = atoi(argv[3]);
   std::string filename = argv[4];
-  std::string linear_file = argv[5];
   
  	double starttime = rtclock();
   
 	std::vector<float> adjMat;// 
 	ParseData parseData(filename, adjMat);
-
-	std::vector<float> linearTermsVect;
-	if (linear_file.empty() == false)
-		parseData.readLinearValues(linear_file, linearTermsVect);
 
 	double endtime = rtclock();
  
@@ -47,7 +42,7 @@ int main(int argc, char** argv)
 	unsigned int num_spins = graphs_data.at(0);
     
   assert( float(adj_mat_size) == std::pow(float(num_spins), 2.0) );
-  assert( num_spins == (unsigned int)linearTermsVect.size()); 
+ 
   if(debug)
   	  printtime("ParseData time: ", starttime, endtime);
 
@@ -59,7 +54,7 @@ int main(int argc, char** argv)
   std::vector<float> avg_magnet;
   //printVecOfVec(adjMat);
   //printf("\n\n\n");
-  //printVecOfVec(linearTermsVect);
+
   std::vector<signed char> spinVec;
   std::vector<float> localEnergyPerSpin;
   spinVec.resize(num_spins);
@@ -67,7 +62,7 @@ int main(int argc, char** argv)
   
 	initializeSpinVec(spinVec);
   //debugSpinVal(spinVec);
- 	std::cout << "start annealing with initial energy:start temp " << startTemp << " num_temps: " << num_temps << " num_sweeps_per_beta: " << num_sweeps_per_beta << " files "<<filename <<linear_file << std::endl;
+ 	std::cout << "start annealing with initial energy:start temp " << startTemp << " num_temps: " << num_temps << " num_sweeps_per_beta: " << num_sweeps_per_beta << " files "<<filename   << std::endl;
 	std::vector<double> beta_schedule = create_beta_schedule_linear(num_temps, startTemp, 0.001f);
  
   std::string out_filename = "avgmagnet_";  
@@ -94,7 +89,7 @@ int main(int argc, char** argv)
         {
           current_spinIdx = RANDOM_SELECTION_SPINS ? int_dist(rng) : spinIdx;
           
-          changeInLocalEnePerSpin( adjMat, linearTermsVect, adj_mat_size,
+          changeInLocalEnePerSpin( adjMat, adj_mat_size,
                                    spinVec, num_spins, 
                                    localEnergyPerSpin, 
                                    current_spinIdx);
@@ -105,7 +100,7 @@ int main(int argc, char** argv)
 #if PARALLEL         
         for(int spinIdx = 0; spinIdx < spinVec.size(); spinIdx++)
         {         
-          changeInLocalEnePerSpin( adjMat, linearTermsVect, adj_mat_size,
+          changeInLocalEnePerSpin( adjMat, adj_mat_size,
                                    spinVec, num_spins, 
                                    localEnergyPerSpin, 
                                    spinIdx);
@@ -159,7 +154,7 @@ int main(int argc, char** argv)
   float total_energy = 0.f;
   for(unsigned int spinIdx = 0; spinIdx < spinVec.size(); spinIdx++)
   {
-    changeInLocalEnePerSpin( adjMat, linearTermsVect, adj_mat_size,
+    changeInLocalEnePerSpin( adjMat, adj_mat_size,
                              spinVec, num_spins, 
                              localEnergyPerSpin, 
                              spinIdx);
