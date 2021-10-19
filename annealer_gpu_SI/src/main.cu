@@ -94,7 +94,8 @@ __global__ void init_best_energy(float* total_energy, float* best_energy, bool i
 
 // Initialize lattice spins
 __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
-	const float* __restrict__ randvals,
+	float* gpuLinTermsVect,
+  const float* __restrict__ randvals,
 	signed char* gpuSpins,
 	signed char* gpuSpins_1,
 	const unsigned int* gpu_num_spins,
@@ -105,12 +106,14 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 
 // fINAL lattice spins
 __global__ void final_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
-	signed char* gpuSpins,
-	const unsigned int* gpu_num_spins,
-	float* hamiltonian_per_spin,
-	float* total_energy);
+       float* gpuLinTermsVect,
+       signed char* gpuSpins,
+       const unsigned int* gpu_num_spins,
+       float* hamiltonian_per_spin,
+       float* total_energy);
 
 __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+  float* gpuLinTermsVect,
 	const float* __restrict__ randvals,
 	signed char* gpuLatSpin,
 	signed char* gpuLatSpin_1,
@@ -206,6 +209,8 @@ int main(int argc, char* argv[])
 {
 
   std::string filename = "";//argv[1]
+  std::string linear_file;
+  
   float start_temp = 20.f;
   float stop_temp = 0.001f;
 	unsigned long long seed = ((getpid()* rand()) & 0x7FFFFFFFF); //((GetCurrentProcessId()* rand()) & 0x7FFFFFFFF);
@@ -221,6 +226,7 @@ int main(int argc, char* argv[])
   while (1) {
 		static struct option long_options[] = {
       {     "J_Matrix_file", required_argument, 0, 'a'},
+      { "Linear_file", required_argument, 0, 'l' },
 			{     "start_temp", required_argument, 0, 'x'},
 			{     "stop_temp", required_argument, 0, 'y'},
 			{          "seed", required_argument, 0, 's'},
@@ -233,7 +239,7 @@ int main(int argc, char* argv[])
 		};
 
 		int option_index = 0;
-		int ch = getopt_long(argc, argv, "a:x:y:s:n:m:odh", long_options, &option_index);
+		int ch = getopt_long(argc, argv, "a:l:x:y:s:n:m:odh", long_options, &option_index);
 		if (ch == -1) break;
 
 		switch (ch) {
@@ -241,6 +247,8 @@ int main(int argc, char* argv[])
 			break;
    case 'a':
 			filename = (optarg); break;
+   case 'l':
+			linear_file = (optarg); break;
 		case 'x':
 			start_temp = atof(optarg); break;
 		case 'y':
@@ -266,11 +274,14 @@ int main(int argc, char* argv[])
 		}
 	}
 
-std::cout << "filename " << filename << " start temp " << start_temp << " stop temp " << stop_temp << " seed " << seed << " num temp " << num_temps << " num sweeps " <<  num_sweeps_per_beta << std::endl;
+std::cout << "filename " << filename << " linear filename " << linear_file << " start temp " << start_temp << " stop temp " << stop_temp << " seed " << seed << " num temp " << num_temps << " num sweeps " <<  num_sweeps_per_beta << std::endl;
 	std::vector<float> adjMat;// float
  	double starttime = rtclock();
 	ParseData parseData(filename, adjMat);
-	
+	std::vector<float> linearTermsVect;
+ 	if (linear_file.empty() == false)
+		parseData.readLinearValues(linear_file, linearTermsVect);
+   
 	double endtime = rtclock();
   
   if(debug)
@@ -291,7 +302,14 @@ std::cout << "filename " << filename << " start temp " << start_temp << " stop t
 	float *gpu_randvals;// same as spins
 	gpuErrchk(cudaMalloc((void**)&gpu_randvals, (num_spins) * sizeof(float)));
 
+	float *gpuLinTermsVect;
+	gpuErrchk(cudaMalloc((void**)&gpuLinTermsVect, (num_spins) * sizeof(float)));
 
+	if (linearTermsVect.size() != num_spins)
+		std::cout << "	[ERROR] error in parsing the linear terms from file" << std::endl;
+
+	gpuErrchk(cudaMemcpy(gpuLinTermsVect, linearTermsVect.data(), (num_spins) * sizeof(float), cudaMemcpyHostToDevice));
+ 
 	float *gpuAdjMat;
 	gpuErrchk(cudaMalloc((void**)&gpuAdjMat, (adj_mat_size) * sizeof(float)));
  
@@ -383,6 +401,7 @@ std::cout << "filename " << filename << " start temp " << start_temp << " stop t
    starttime = rtclock();
 
 	init_spins_total_energy << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
+    gpuLinTermsVect,
 		gpu_randvals,
 		gpu_spins,
 		gpu_spins_1,
@@ -444,6 +463,7 @@ std::cout << "filename " << filename << " start temp " << start_temp << " stop t
         cudaEventRecord(start); 
    }
       	alter_spin << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
+            gpuLinTermsVect,
       			gpu_randvals,
       			gpu_spins,
       			gpu_spins_1,
@@ -542,12 +562,13 @@ if(debug)
 	gpu_max_cut_value[0] = 0.f;
 	gpu_plus_one_spin[0] = 0;
 	gpu_minus_one_spin[0] = 0;
-  gpu_total_energy[0] = 0;
+  gpu_total_energy[0] = 0.f;
    if(gpu_select_spin_arr[0]%2 == 0)	
    {
     
 	  final_spins_total_energy << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
-			 gpu_spins_1,
+			 gpuLinTermsVect,
+       gpu_spins_1,
 			 gpu_num_spins,
 			 gpu_hamiltonian_per_spin,
 			 gpu_total_energy); 
@@ -561,14 +582,15 @@ if(debug)
   				gpu_minus_one_spin);
   
 		 cudaDeviceSynchronize();
-     printf("@@@@ cur engy %.1f best engy %.1f \n", gpu_total_energy[0], gpu_best_energy[0]);
+     //printf("@@@@ cur engy %.1f best engy %.1f \n", gpu_total_energy[0], gpu_best_energy[0]);
      gpuErrchk(cudaMemcpy(cpu_spins, gpu_spins_1, num_spins * sizeof(*gpu_spins_1), cudaMemcpyDeviceToHost));
     }    
    else	
    {
    
    		 final_spins_total_energy << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
-  			 gpu_spins,
+  			 gpuLinTermsVect,
+         gpu_spins,
   			 gpu_num_spins,
   			 gpu_hamiltonian_per_spin,
   			 gpu_total_energy);
@@ -582,7 +604,7 @@ if(debug)
   				gpu_minus_one_spin);
   
   		 cudaDeviceSynchronize();
-       printf("@@@@ cur engy %.1f best engy %.1f \n", gpu_total_energy[0], gpu_best_energy[0]);          
+       //printf("@@@@ cur engy %.1f best engy %.1f \n", gpu_total_energy[0], gpu_best_energy[0]);          
        gpuErrchk(cudaMemcpy(cpu_spins, gpu_spins_1, num_spins * sizeof(*gpu_spins), cudaMemcpyDeviceToHost));
    }     
         
@@ -621,7 +643,7 @@ if(debug)
   fclose(fptr1);
   
  }
-	std::cout << "\tbest energy value: " << gpu_best_energy[0] << std::endl;
+  std::cout << "\ttotal energy value: " << gpu_total_energy[0] << std::endl;
 	std::cout << "\tbest max cut value: " << gpu_best_max_cut_value[0] << std::endl;
 	std::cout << "\telapsed time in sec: " << duration * 1e-6 << std::endl;
  
@@ -645,6 +667,7 @@ if(debug)
 
 #if CORRECT
 __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+  float* gpuLinTermsVect,
 	const float* __restrict__ randvals,
 	signed char* gpuLatSpin,
 	signed char* gpuLatSpin_1,
@@ -765,6 +788,7 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 
 // Initialize lattice spins
 __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+  float* gpuLinTermsVect,
 	const float* __restrict__ randvals,
 	signed char* gpuSpins,
 	signed char* gpuSpins_1,
@@ -831,7 +855,8 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 
 // fINAL lattice spins
 __global__ void final_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
-	signed char* gpuSpins,
+	float* gpuLinTermsVect,
+  signed char* gpuSpins,
 	const unsigned int* gpu_num_spins,
 	float* hamiltonian_per_spin,
 	float* total_energy) {

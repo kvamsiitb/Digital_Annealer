@@ -18,7 +18,8 @@ public:
 	ParseData(const string filename, std::vector<float>& adjMat);
 	void readDataDim(string data, std::vector<float>& adjMat);
 	void readData(string data, std::vector<float>& adjMat);
-
+  void readLinearValues(const string filename, std::vector<float>& linearVect);
+  
 	std::vector<unsigned int> getDataDims() const;
 private:
 	std::unique_ptr<std::ifstream, std::function<void(std::ifstream*)> > _pifstream;

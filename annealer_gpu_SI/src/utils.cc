@@ -42,6 +42,35 @@ ParseData::ParseData(const string filename, std::vector<float>& adjMat) :_pifstr
 		std::cerr << "File not opening " << std::endl;
 	}
 }
+
+void ParseData::readLinearValues(const string filename, std::vector<float>& linearVect)
+{
+
+        std::unique_ptr<std::ifstream, std::function<void(std::ifstream*)> > pLVifstream(
+                                                                new std::ifstream(filename, std::ifstream::in),
+                                                                [](std::ifstream* fp) {fp->close(); });
+
+        string row_line;
+        if (pLVifstream->is_open()) {
+                while (std::getline(*pLVifstream, row_line)) {
+                        std::istringstream input;
+                        input.str(row_line);
+
+                        for (std::string line; std::getline(input, line, ' '); ) {
+                                linearVect.push_back(std::stof(line));
+                        }
+
+                }
+                pLVifstream->close();
+        }
+        else
+        {
+                std::cerr << " [ERROR] Linear File not opening " << std::endl;
+        }
+
+// print the value of the vector
+}
+
 void ParseData::readDataDim(string data, std::vector<float>& adjMat)
 {
 	std::istringstream input;
