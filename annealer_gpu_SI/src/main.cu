@@ -742,29 +742,29 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	   
     float change_in_energy = - 2.f * ( vertice_change_energy - gpuLinTermsVect[vertice_Id] ) * current_spin_shared_mem; // final energy - current energy
   
-    if(change_in_energy < 0)
+    if(change_in_energy > 0)
     {
-      		float acceptance_ratio = exp(- 2.f * beta * (vertice_change_energy - gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
+      		float acceptance_ratio = exp(-1.f * beta * change_in_energy); // exp(- 2.f * beta * (vertice_change_energy - gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
       		if (randvals[vertice_Id] < acceptance_ratio) // low temp
       		{  
       			if (dev_select_spin_arr[0] % 2 == 0)
-      				gpuLatSpin_1[vertice_Id] = (signed char)(1.f * current_spin_shared_mem);
+      				gpuLatSpin_1[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
       			else
-      				gpuLatSpin[vertice_Id] = (signed char)(1.f * current_spin_shared_mem); 
+      				gpuLatSpin[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem); 
       		}      
       	else { 
             			if (dev_select_spin_arr[0] % 2 == 0)
-            				gpuLatSpin_1[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
+            				gpuLatSpin_1[vertice_Id] = (signed char)(current_spin_shared_mem);
             			else
-            				gpuLatSpin[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
+            				gpuLatSpin[vertice_Id] = (signed char)(current_spin_shared_mem);
     			        __threadfence();
-                  atomicAdd(total_energy, (-1.f * change_in_energy));
+                  atomicAdd(total_energy, (change_in_energy));
              } 
     } 
    	else {
     
-       		float acceptance_ratio = exp(2.f * beta * (vertice_change_energy - gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
-      		if (randvals[vertice_Id] < acceptance_ratio)// change is good and low temp
+       		float acceptance_ratio = exp(1.f * beta * change_in_energy);
+      		if (randvals[vertice_Id] > acceptance_ratio)// change is good and low temp
       		{   
       			if (dev_select_spin_arr[0] % 2 == 0)
       				gpuLatSpin_1[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
