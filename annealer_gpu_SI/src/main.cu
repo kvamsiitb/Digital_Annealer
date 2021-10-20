@@ -125,7 +125,29 @@ __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	unsigned int* dev_select_spin_arr,
   clock_t *timer);
 
-
+__global__ void changeInLocalEnePerSpin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+	float* gpuLinTermsVect,
+	const float* __restrict__ randvals,
+	signed char* gpuLatSpin,
+	signed char* gpuLatSpin_1,
+	const unsigned int* gpu_num_spins,
+	float* hamiltonian_per_spin,
+	const float beta,
+	float* total_energy,
+	curandState* globalState,
+	unsigned int* dev_select_spin_arr,
+  clock_t *timer);
+  
+__global__ void spinUpdate(const float* __restrict__ randvals, signed char* gpuLatSpin,
+	signed char* gpuLatSpin_1,
+	const unsigned int* gpu_num_spins,
+	float* hamiltonian_per_spin,
+	const float beta,
+	float* total_energy,
+	float* best_energy,
+	curandState* globalState,
+	unsigned int* dev_select_spin_arr);
+ 
 	__global__ void d_avg_magnetism(signed char* gpuSpins, const unsigned int* gpu_num_spins, float* avg_magnetism)	
 {	
   unsigned int p_Id = threadIdx.x;	
@@ -385,7 +407,7 @@ int main(int argc, char* argv[])
 	gpuErrchk(cudaMalloc((void**)&gpu_hamiltonian_per_spin, num_spins * sizeof(float)));
 
 	std::cout << "initialize spin values " << std::endl;
-	//int blocks = (num_spins + THREADS - 1) / THREADS;
+	int blocks = (num_spins + THREADS - 1) / THREADS;
 	curandGenerateUniform(rng, gpu_randvals, num_spins);
 	
   //d_debug_kernel<<< 1, 1>>>(gpuAdjMat, gpu_adj_mat_size, gpu_num_spins);
@@ -467,8 +489,8 @@ int main(int argc, char* argv[])
    {         
         cudaEventRecord(start); 
    }
-      	alter_spin << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
-				gpuLinTermsVect,
+      	changeInLocalEnePerSpin << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
+				    gpuLinTermsVect,
       			gpu_randvals,
       			gpu_spins,
       			gpu_spins_1,
@@ -479,9 +501,21 @@ int main(int argc, char* argv[])
       			devRanStates,
       			gpu_select_spin_arr,
             dtimer);
+            
+			  spinUpdate << < blocks, THREADS >> > (gpu_randvals,
+    				gpu_spins,
+    				gpu_spins_1,
+    				gpu_num_spins,
+    				gpu_hamiltonian_per_spin,
+    				beta_schedule.at(i),
+    				gpu_total_energy,
+    				gpu_best_energy,
+    				devRanStates,
+    				gpu_select_spin_arr);
+            
     if(debug)
     {
-       cudaEventRecord(stop);   
+         cudaEventRecord(stop);   
          cudaEventSynchronize(stop);
          float milliseconds = 0;
          cudaEventElapsedTime(&milliseconds, start, stop);
@@ -671,6 +705,188 @@ if(debug)
 #define CORRECT 1
 
 #if CORRECT
+
+__global__ void changeInLocalEnePerSpin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
+	float* gpuLinTermsVect,
+	const float* __restrict__ randvals,
+	signed char* gpuLatSpin,
+	signed char* gpuLatSpin_1,
+	const unsigned int* gpu_num_spins,
+	float* hamiltonian_per_spin,
+	const float beta,
+	float* total_energy,
+	curandState* globalState,
+	unsigned int* dev_select_spin_arr,
+  clock_t *timer) {
+
+	unsigned int vertice_Id = blockIdx.x;
+	unsigned int p_Id = threadIdx.x;    //32 worker threads 
+	// for each neighour of vertex id pull the gpucurrentupdate[i] and place it in the shared memory
+
+	// shared  spin_v0|spin_v1|.......|J_spin0| J_spin1| J_spin2|..
+	__shared__ float sh_mem_spins_Energy[THREADS];
+  sh_mem_spins_Energy[p_Id] = 0;
+  __syncthreads();
+
+	float current_spin_shared_mem;
+
+	if (dev_select_spin_arr[0] % 2 == 0)
+		current_spin_shared_mem = (float)gpuLatSpin[vertice_Id];
+	else
+		current_spin_shared_mem = (float)gpuLatSpin_1[vertice_Id];
+
+
+	unsigned int stride_jump_each_vertice = sqrt((float)gpuAdjMatSize[0]);
+	unsigned int num_spins = gpu_num_spins[0];
+	int num_iter = int((num_spins) / THREADS) + 1;// @R (num_spins + THREADS - 1) / THREADS;
+
+	// placing all the spins data into the shared memory..
+	// hence, decouple the spins to the global spins
+
+ 
+	for (int i = 0; i < num_iter; i++)
+	{
+		if (p_Id + i * THREADS < num_spins)
+		{
+			float current_spin;
+			if (dev_select_spin_arr[0] % 2 == 0)
+				current_spin = (float)gpuLatSpin[p_Id + i * THREADS];
+			else
+				current_spin = (float)gpuLatSpin_1[p_Id + i * THREADS];
+        
+			sh_mem_spins_Energy[p_Id] += gpuAdjMat[p_Id + (i * THREADS) + (vertice_Id * stride_jump_each_vertice)] * (current_spin);
+ 		       
+		}
+	}
+	__syncthreads();
+
+
+  for (int off = blockDim.x/2; off; off /= 2) {
+     if (threadIdx.x < off) {
+         sh_mem_spins_Energy[threadIdx.x] += sh_mem_spins_Energy[threadIdx.x + off];
+       }
+   __syncthreads();
+   }
+   
+  __syncthreads();
+	
+	if (p_Id == 0)
+	{
+  
+	  float vertice_change_energy = -1.f * sh_mem_spins_Energy[0];
+	   
+    hamiltonian_per_spin[vertice_Id] =  - 2.f * ( vertice_change_energy - gpuLinTermsVect[vertice_Id] ) * current_spin_shared_mem; // final energy - current energy
+    
+    /*
+    if(change_in_energy > 0)
+    {
+      		float acceptance_ratio = exp(-1.f * beta * change_in_energy); // exp(- 2.f * beta * (vertice_change_energy - gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
+      		if (randvals[vertice_Id] < acceptance_ratio) // low temp
+      		{  
+      			if (dev_select_spin_arr[0] % 2 == 0)
+      				gpuLatSpin_1[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
+      			else
+      				gpuLatSpin[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem); 
+      		}      
+      	else { 
+            			if (dev_select_spin_arr[0] % 2 == 0)
+            				gpuLatSpin_1[vertice_Id] = (signed char)(current_spin_shared_mem);
+            			else
+            				gpuLatSpin[vertice_Id] = (signed char)(current_spin_shared_mem);
+    			        __threadfence();
+                  atomicAdd(total_energy, (change_in_energy));
+             } 
+    } 
+   	else {
+    
+       		float acceptance_ratio = exp(1.f * beta * change_in_energy);
+      		if (randvals[vertice_Id] > acceptance_ratio)// change is good and low temp
+      		{   
+      			if (dev_select_spin_arr[0] % 2 == 0)
+      				gpuLatSpin_1[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
+      			else
+      				gpuLatSpin[vertice_Id] = (signed char)(-1.f * current_spin_shared_mem);
+      			__threadfence();    
+      			atomicAdd(total_energy, (-1.f * change_in_energy));
+      		}      
+            	else {
+          			if (dev_select_spin_arr[0] % 2 == 0)
+          				gpuLatSpin_1[vertice_Id] = (signed char)( current_spin_shared_mem);
+          			else
+          				gpuLatSpin[vertice_Id] = (signed char)( current_spin_shared_mem);
+                }
+		 }
+   */ 
+	}
+
+  /*********************timing ******************************/
+  //if (p_Id == 0) timer[vertice_Id+gridDim.x] = clock();
+  /*********************End timing ******************************/
+
+}
+
+__global__ void spinUpdate(const float* __restrict__ randvals, signed char* gpuLatSpin,
+	signed char* gpuLatSpin_1,
+	const unsigned int* gpu_num_spins,
+	float* hamiltonian_per_spin,
+	const float beta,
+	float* total_energy,
+	float* best_energy,
+	curandState* globalState,
+	unsigned int* dev_select_spin_arr)
+{
+	unsigned int p_Id = threadIdx.x + blockIdx.x * blockDim.x;
+	if (p_Id >= gpu_num_spins[0]) return;
+
+	float current_spin_shared_mem;
+
+	if (dev_select_spin_arr[0] % 2 == 0)
+		current_spin_shared_mem = (float)gpuLatSpin[p_Id];
+	else
+		current_spin_shared_mem = (float)gpuLatSpin_1[p_Id];
+
+	float change_in_energy = hamiltonian_per_spin[p_Id];
+
+    if(change_in_energy > 0)
+    {
+      		float acceptance_ratio = exp(-1.f * beta * change_in_energy); // exp(- 2.f * beta * (vertice_change_energy - gpuLinTermsVect[vertice_Id]) * current_spin_shared_mem);
+      		if (randvals[p_Id] < acceptance_ratio) // low temp
+      		{  
+      			if (dev_select_spin_arr[0] % 2 == 0)
+      				gpuLatSpin_1[p_Id] = (signed char)(-1.f * current_spin_shared_mem);
+      			else
+      				gpuLatSpin[p_Id] = (signed char)(-1.f * current_spin_shared_mem); 
+      		}      
+      	else { 
+            			if (dev_select_spin_arr[0] % 2 == 0)
+            				gpuLatSpin_1[p_Id] = (signed char)(current_spin_shared_mem);
+            			else
+            				gpuLatSpin[p_Id] = (signed char)(current_spin_shared_mem);
+    			        __threadfence();
+                  atomicAdd(total_energy, (change_in_energy));
+             } 
+    } 
+   	else {
+    
+       		float acceptance_ratio = exp(1.f * beta * change_in_energy);
+      		if (randvals[p_Id] > acceptance_ratio)// change is good and low temp
+      		{   
+      			if (dev_select_spin_arr[0] % 2 == 0)
+      				gpuLatSpin_1[p_Id] = (signed char)(-1.f * current_spin_shared_mem);
+      			else
+      				gpuLatSpin[p_Id] = (signed char)(-1.f * current_spin_shared_mem);
+      			__threadfence();    
+      			atomicAdd(total_energy, (-1.f * change_in_energy));
+      		}      
+            	else {
+          			if (dev_select_spin_arr[0] % 2 == 0)
+          				gpuLatSpin_1[p_Id] = (signed char)( current_spin_shared_mem);
+          			else
+          				gpuLatSpin[p_Id] = (signed char)( current_spin_shared_mem);
+                }
+		 }
+
+}
 __global__ void alter_spin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
 	float* gpuLinTermsVect,
 	const float* __restrict__ randvals,
