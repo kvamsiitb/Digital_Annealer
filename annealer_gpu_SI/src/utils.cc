@@ -104,7 +104,9 @@ void ParseData::readData(string data, std::vector<float>& adjMat)
 		//std::this_thread::sleep_for(std::chrono::seconds(1));
 		int first_entry= std::stoi(line_data.at(0));
 		int sec_entry = std::stoi(line_data.at(1));
-		adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = stof(line_data.at(2) );
+		
+    adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = stof(line_data.at(2) );
+    adjMat[(_data_dims.at(0) * (sec_entry - 1)) + (first_entry - 1)] = stof(line_data.at(2));   
 		//std::cout << adjMat[_data_dims.at(0)*(line_data.at(0) - 1) + (line_data.at(1) - 1)] << std::endl;
 	}
 }
