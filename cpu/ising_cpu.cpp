@@ -1,10 +1,16 @@
 #include "utils.hpp"
 
+#include <algorithm>
 #include <cassert>
 
-#define SERIAL 0
+/* 0:Serial, 1:Parallel */
 #define PARALLEL 1
-#define RANDOM_SELECTION_SPINS 0
+
+/* 0:Standard, 1:Algorithm1, 2:Algorithm2, 3:Metropolis-Hastings */
+#define IMPLEMENTATION 1
+
+/* 0:InOrder, 1:Random */
+#define RANDOM_SELECTION_SPINS 1
 
 int main(int argc, char **argv)
 {
@@ -39,7 +45,7 @@ int main(int argc, char **argv)
     double endtime = rtclock();
 
     unsigned int adj_mat_size = adjMat.size();
-    auto graphs_data = parseData.getDataDims();//sqrt(adjMat.size());
+    auto graphs_data = parseData.getDataDims(); // sqrt(adjMat.size());
     unsigned int num_spins = graphs_data.at(0);
 
     assert(float(adj_mat_size) == std::pow(float(num_spins), 2.0));
@@ -47,9 +53,9 @@ int main(int argc, char **argv)
     if (debug)
         printtime("ParseData time: ", starttime, endtime);
 
-    std::random_device dev;
-    std::mt19937 rng(dev());
-    std::uniform_int_distribution<std::mt19937::result_type> int_dist(0, num_spins - 1);
+    // std::random_device dev;
+    // std::mt19937 rng(dev()); // defined by header file itself instead
+    std::uniform_int_distribution<> int_dist(0, num_spins - 1);
 
     std::vector<float> avg_magnet;
     //printVecOfVec(adjMat);
@@ -62,10 +68,15 @@ int main(int argc, char **argv)
 
     initializeSpinVec(spinVec);
     //debugSpinVal(spinVec);
-    std::cout << "\nStarting annealing with initial energy startTemp: " << startTemp << " num_temps: "
-        << num_temps << " num_sweeps_per_beta: " << num_sweeps_per_beta << " files: "
-        << filename << " " << linear_file << "\n" << std::endl;
+
+    std::cout << "\nStarting annealing with startTemp: " << startTemp << ", num_temps: " << num_temps
+        << ", num_sweeps_per_beta: " << num_sweeps_per_beta << ", files: " << filename << " " << linear_file
+        << "\n" << "Threading: " << (PARALLEL ? "Parallel" : "Serial")
+        << ", Random Spin Selection: " << (RANDOM_SELECTION_SPINS ? "On" : "Off") 
+        << ", Implementation: " << IMPLEMENTATION << "\n" << std::endl;
+
     std::vector<double> beta_schedule = create_beta_schedule_linear(num_temps, startTemp, 0.001f);
+    std::vector<double> fp_schedule = create_fp_schedule_linear(num_temps);
 
     std::string out_filename = "avgmagnet_";
     std::string in_adjmat = filename;
@@ -80,46 +91,55 @@ int main(int argc, char **argv)
 
     auto t0 = std::chrono::high_resolution_clock::now();
 
-    int current_spinIdx = 0;
+    std::vector<int> random_indices(spinVec.size());
+    std::iota(random_indices.begin(), random_indices.end(), 0);
+
+    std::default_random_engine re{ rd() };
+    unsigned int current_spinIdx = 0;
+
     for (int i = 0; i < beta_schedule.size(); i++)
     {
-        for (int ii = 0; ii < num_sweeps_per_beta; ii++)
+        for (int j = 0; j < num_sweeps_per_beta; j++)
         {
-#if SERIAL         
+#if PARALLEL
+            std::vector<unsigned int> spinList(spinVec.size());
+            
             for (int spinIdx = 0; spinIdx < spinVec.size(); spinIdx++)
             {
-                current_spinIdx = RANDOM_SELECTION_SPINS ? int_dist(rng) : spinIdx;
-
-                changeInLocalEnePerSpin(adjMat, linearTermsVect, adj_mat_size,
-                    spinVec, num_spins,
-                    localEnergyPerSpin,
-                    current_spinIdx);
-                updateMetropolisHasting(spinVec, num_spins, localEnergyPerSpin, current_spinIdx, beta_schedule.at(i));
-            }
-#endif /* SERIAL */
-
-#if PARALLEL         
-            for (int spinIdx = 0; spinIdx < spinVec.size(); spinIdx++)
-            {
-                changeInLocalEnePerSpin(adjMat, linearTermsVect, adj_mat_size,
-                    spinVec, num_spins,
-                    localEnergyPerSpin,
-                    spinIdx);
+                spinList[spinIdx] = RANDOM_SELECTION_SPINS ? int_dist(rng) : spinIdx;
+                changeInLocalEnePerSpin(adjMat, linearTermsVect, spinVec, localEnergyPerSpin, spinList[spinIdx]);
             }
 
             for (int spinIdx = 0; spinIdx < spinVec.size(); spinIdx++)
             {
+                updateMetropolisHasting(spinVec, localEnergyPerSpin, spinList[spinIdx],
+                                        beta_schedule.at(i), fp_schedule.at(i), IMPLEMENTATION);
+            }
+#else /* not PARALLEL = SERIAL */
+            for (int spinIdx = 0; spinIdx < spinVec.size(); spinIdx++)
+            {
                 current_spinIdx = RANDOM_SELECTION_SPINS ? int_dist(rng) : spinIdx;
-                updateMetropolisHasting(spinVec, num_spins, localEnergyPerSpin, current_spinIdx, beta_schedule.at(i));
-        }
-#endif /* PARALLEL */
-    }
+
+                changeInLocalEnePerSpin(adjMat, linearTermsVect, spinVec, localEnergyPerSpin, current_spinIdx);
+                updateMetropolisHasting(spinVec, localEnergyPerSpin, current_spinIdx,
+                                        beta_schedule.at(i), fp_schedule.at(i), IMPLEMENTATION);
+            }
+#endif /* PARALLEL or SERIAL */
+
+#if IMPLEMENTATION == 1 /* Algorithm 1 */
+            std::shuffle(random_indices.begin(), random_indices.end(), re);
+            for (int spinIdx = 0; spinIdx < fp_schedule.at(i) * spinVec.size(); spinIdx++)
+            {
+                spinVec[random_indices[spinIdx]] = -spinVec[random_indices[spinIdx]];
+            }
+#endif /* Algorithm 1 */
+            }
 
         float magnet = avgMagnetisation(spinVec, beta_schedule.at(i));
         if (debug)
             fprintf(fptr, "Temperature %.6f magnet %.6f \n", 1.f / beta_schedule.at(i), magnet);
         avg_magnet.push_back(magnet);
-}
+        }
 
     auto t1 = std::chrono::high_resolution_clock::now();
 
@@ -127,8 +147,8 @@ int main(int argc, char **argv)
     fprintf(fptr, "duration %.3f \n", (duration * 1e-6));
     fclose(fptr);
 
-    printf("\n\telapsed time: %f sec\n", duration * 1e-6);
-    printf("\tupdates per ns: %f\n", (double)(spinVec.size()) * num_sweeps_per_beta / duration * 1e-3);
+    printf("\n\telapsed time   : %f sec\n", duration * 1e-6);
+    printf("\tupdates per ns : %f\n", (double)(spinVec.size()) * num_sweeps_per_beta / duration * 1e-3);
 
     if (debug)
     {
@@ -148,22 +168,18 @@ int main(int argc, char **argv)
         }
 
         fprintf(fptr1, "\n\n\n");
-        float total_energy = 0.f;
 
         for (unsigned int spinIdx = 0; spinIdx < spinVec.size(); spinIdx++)
         {
-            changeInLocalEnePerSpin(adjMat, linearTermsVect, adj_mat_size,
-                spinVec, num_spins,
-                localEnergyPerSpin,
-                spinIdx);
-            total_energy += localEnergyPerSpin[spinIdx];
+            changeInLocalEnePerSpin(adjMat, linearTermsVect, spinVec, localEnergyPerSpin, spinIdx);
         }
 
-        fprintf(fptr1, "\ttotal energy value: %.6f\n", total_energy);
+        float total_energy = totalEnergy(adjMat, linearTermsVect, spinVec);
+        fprintf(fptr1, "\ttotal energy   : %.6f\n", total_energy);
 
         fclose(fptr1);
-        printf("\ttotal energy value: %f\n\n", total_energy);
+        printf("\ttotal energy   : %f\n\n", total_energy);
     }
 
     return 0;
-}
+    }

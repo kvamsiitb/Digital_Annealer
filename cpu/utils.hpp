@@ -15,6 +15,10 @@ Desc: Parse Jij matrix
 #include <sys/time.h>
 #include <vector>
 
+std::random_device rd;
+std::seed_seq sd{ rd(), rd(), rd(), rd() };
+std::mt19937 rng(sd);
+
 using std::string;
 
 double rtclock();
@@ -41,7 +45,7 @@ private:
 End of parser
 */
 
-void printVecOfVec(std::vector<float> adjMat);
+void printVecOfVec(const std::vector<float> &adjMat);
 
 std::vector<double> create_beta_schedule_linear(uint32_t num_sweeps, double beta_start, double beta_end = 0.001f);
 
@@ -49,59 +53,87 @@ float avgMagnetisation(const std::vector<signed char> &spinVec, float temp);
 
 void initializeSpinVec(std::vector<signed char> &spinVec);
 
-void changeInLocalEnePerSpin(const std::vector<float> &adjMat, std::vector<float> &linearTermsVect, unsigned int adj_mat_size,
-    const std::vector<signed char> &spinVec, unsigned int num_spins,
-    std::vector<float> &localEnergyPerSpin,
-    unsigned int spinIdx);
+void changeInLocalEnePerSpin(const std::vector<float> &adjMat, const std::vector<float> &linearTermsVect,
+                             const std::vector<signed char> &spinVec, std::vector<float> &localEnergyPerSpin,
+                             unsigned int spinIdx);
 
-void updateMetropolisHasting(std::vector<signed char> &spinVec, unsigned int num_spins,
-    const std::vector<float> &localEnergyPerSpin,
-    unsigned int spinIdx, float beta);
+void updateMetropolisHasting(std::vector<signed char> &spinVec, const std::vector<float> &localEnergyPerSpin,
+                             unsigned int spinIdx, float beta, float fp, int implementation);
 
-float partialMaxCut(const std::vector<float> &adjMat, std::vector<float> &linearTermsVect, unsigned int adj_mat_size,
-    const std::vector<signed char> &spinVec, unsigned int num_spins,
-    unsigned int spinIdx);
+float partialMaxCut(const std::vector<float> &adjMat, std::vector<float> &linearTermsVect,
+                    const std::vector<signed char> &spinVec, unsigned int spinIdx);
 
 void debugSpinVal(std::vector<signed char> &spinVec);
 
-/* STANDARDIMP */
-void updateMetropolisHasting(std::vector<signed char> &spinVec, unsigned int num_spins,
-    const std::vector<float> &localEnergyPerSpin,
-    unsigned int spinIdx, float beta)
+void updateMetropolisHasting(std::vector<signed char> &spinVec, const std::vector<float> &localEnergyPerSpin,
+                             unsigned int spinIdx, float beta, float fp, int implementation)
 {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_real_distribution<> dist(0, 1);
+    std::uniform_real_distribution<> dist(0, 1);
 
-    if (localEnergyPerSpin[spinIdx] > 0)
+    if (implementation == 0) // Standard Implementation
     {
-        float acceptance_probability = exp(-1.f * beta * (localEnergyPerSpin[spinIdx]));
-        float randval = dist(gen);
-        if (randval < acceptance_probability)
+        float randval = dist(rng);
+
+        if (localEnergyPerSpin[spinIdx] > 0)
         {
-            spinVec[spinIdx] = (signed char)(-1 * (int)spinVec[spinIdx]);
+            float acceptance_probability = exp(-1.f * beta * (localEnergyPerSpin[spinIdx]));
+            if (randval < acceptance_probability)
+            {
+                spinVec[spinIdx] = -spinVec[spinIdx];
+            }
+        }
+        else
+        {
+            float acceptance_probability = exp(1.f * beta * (localEnergyPerSpin[spinIdx]));
+            if (randval > acceptance_probability)
+            {
+                spinVec[spinIdx] = -spinVec[spinIdx];
+            }
         }
     }
-    else
+    else if (implementation == 1) // Algorithm 1
     {
-        float acceptance_probability = exp(1.f * beta * (localEnergyPerSpin[spinIdx]));
-        float randval = dist(gen);
-        if (randval > acceptance_probability)
+        if (localEnergyPerSpin[spinIdx] < 0)
         {
-            spinVec[spinIdx] = (signed char)(-1 * (int)spinVec[spinIdx]);
+            spinVec[spinIdx] = -spinVec[spinIdx];
+        }
+    }
+    else if (implementation == 2) // Algorithm 2
+    {
+        if (localEnergyPerSpin[spinIdx] < 0)
+        {
+            spinVec[spinIdx] = -spinVec[spinIdx];
+        }
+
+        float randval = dist(rng);
+        if (randval < fp)
+        {
+            spinVec[spinIdx] = -spinVec[spinIdx];
+        }
+    }
+    else if (implementation == 3) // Metropolis-Hastings 
+    {
+        float prob_ratio = exp(-1.f * beta * (localEnergyPerSpin[spinIdx])); // exp(- (E_f - E_i) / T)
+        float acceptance_probability = std::min((float)1.f, prob_ratio);
+
+        // H(new_spin) - H(old_spin) = - 2 * S * s_i
+
+        float randval = dist(rng);
+        if (randval < acceptance_probability)
+        {
+            spinVec[spinIdx] = -spinVec[spinIdx];
         }
     }
 }
 
-void changeInLocalEnePerSpin(const std::vector<float> &adjMat, std::vector<float> &linearTermsVect, unsigned int adj_mat_size,
-    const std::vector<signed char> &spinVec, unsigned int num_spins,
-    std::vector<float> &localEnergyPerSpin,
-    unsigned int spinIdx)
+void changeInLocalEnePerSpin(const std::vector<float> &adjMat, const std::vector<float> &linearTermsVect,
+                             const std::vector<signed char> &spinVec, std::vector<float> &localEnergyPerSpin,
+                             unsigned int spinIdx)
 {
     float changeInEnergy = 0.f;
-    for (int index = 0; index < num_spins; index++)
+    for (int index = 0; index < spinVec.size(); index++)
     {
-        changeInEnergy += -1.f * adjMat[num_spins * spinIdx + index] * (float)spinVec[index]; // S = - \sum Jij[] s[j] - h[i]
+        changeInEnergy += -1.f * adjMat[spinVec.size() * spinIdx + index] * (float)spinVec[index]; // S = - \sum Jij[] s[j] - h[i]
     }
 
     changeInEnergy += -1.f * linearTermsVect[spinIdx];
@@ -116,24 +148,47 @@ float avgMagnetisation(const std::vector<signed char> &spinVec, float beta)
     float ones = 0;
     for (int i = 0; i < spinVec.size(); i++)
     {
-        //printf("%d %.1f ", i, (float)spinVec[i]);
+        // printf("% .1f ", (float)spinVec[i]);
+
         ones += (float)spinVec[i];
     }
     float avg_magnet = ones / spinVec.size();
-    
-    printf(" temp: %f\tmagnetization: % g\n", 1.f / beta, avg_magnet);
+
+    printf(" temp: %f \tmagnetization: % g\n", 1.f / beta, avg_magnet);
 
     return avg_magnet;
 }
 
-float partialMaxCut(const std::vector<float> &adjMat, std::vector<float> &linearTermsVect, unsigned int adj_mat_size,
-    const std::vector<signed char> &spinVec, unsigned int num_spins,
-    unsigned int spinIdx)
+float totalEnergy(const std::vector<float> &adjMat, std::vector<float> &linearTermsVect,
+                  const std::vector<signed char> &spinVec)
+{
+    float totalEnergy = 0.f;
+    for (int spinIdx = 0; spinIdx < spinVec.size(); spinIdx++)
+    {
+        float perSpinEnergy = 0.f;
+        for (int index = 0; index < spinVec.size(); index++)
+        {
+            perSpinEnergy += -1.f * adjMat[spinVec.size() * spinIdx + index] * (float)spinVec[index]; // S = - \sum Jij[] s[j] - h[i]
+        }
+
+        perSpinEnergy += -2.f * linearTermsVect[spinIdx];
+        // energy = S * s[i] 
+        perSpinEnergy *= (float)spinVec[spinIdx];
+
+        totalEnergy += perSpinEnergy;
+    }
+
+    totalEnergy *= 0.5;
+    return totalEnergy;
+}
+
+float partialMaxCut(const std::vector<float> &adjMat, std::vector<float> &linearTermsVect,
+                    const std::vector<signed char> &spinVec, unsigned int spinIdx)
 {
     float pMaxCut = 0.f;
-    for (int index = 0; index < num_spins; index++)
+    for (int index = 0; index < spinVec.size(); index++)
     {
-        pMaxCut += adjMat[num_spins * spinIdx + index] * (1.f - ((float)spinVec[index] * (float)spinVec[spinIdx]));
+        pMaxCut += adjMat[spinVec.size() * spinIdx + index] * (1.f - ((float)spinVec[index] * (float)spinVec[spinIdx]));
     }
 
     // changeInEnergy(i.e. (E_f - E_i ) ) = S * -1 * s[i] - S * s[i] = -2 * S * s[i]
@@ -144,13 +199,11 @@ float partialMaxCut(const std::vector<float> &adjMat, std::vector<float> &linear
 
 void initializeSpinVec(std::vector<signed char> &spinVec)
 {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::bernoulli_distribution d(0.5f);
+    std::bernoulli_distribution d(0.5f);
 
     for (int i = 0; i < spinVec.size(); i++)
     {
-        bool bern_value = d(gen);
+        bool bern_value = d(rng);
         if (bern_value)
         {
             spinVec[i] = (signed char)1;
@@ -166,10 +219,12 @@ std::vector<double> create_beta_schedule_linear(uint32_t num_sweeps, double beta
 {
     std::vector<double> beta_schedule;
     double beta_max;
+
     if (beta_end == -1)
         beta_max = (1 / 1000) * beta_start; //  here temperature will be zero when beta_max is 1000.f
     else
         beta_max = beta_end;
+
     double diff = (beta_start - beta_max) / (num_sweeps - 1); // A.P 3.28 - 0.01 inverse value increa finnal decrease
     for (int i = 0; i < num_sweeps; i++)
     {
@@ -180,15 +235,29 @@ std::vector<double> create_beta_schedule_linear(uint32_t num_sweeps, double beta
     return beta_schedule;
 }
 
-void printVecOfVec(std::vector<float> adjMat)
+std::vector<double> create_fp_schedule_linear(uint32_t num_sweeps)
+{
+    std::vector<double> fp_schedule;
+
+    double diff = 0.50f / (num_sweeps - 1); // A.P 3.28 - 0.01 inverse value increa finnal decrease
+    for (int i = 0; i < num_sweeps; i++)
+    {
+        fp_schedule.push_back(0.50 - i * diff);
+    }
+
+    return fp_schedule;
+}
+
+void printVecOfVec(const std::vector<float> &adjMat)
 {
     std::cout << "\n";
 
-    for (int j = 0; j < sqrt(adjMat.size()); j++)
+    int n = sqrt(adjMat.size());
+    for (int j = 0; j < n; j++)
     {
-        for (int i = 0; i < sqrt(adjMat.size()); i++)
+        for (int i = 0; i < n; i++)
         {
-            std::cout << adjMat[i + sqrt(adjMat.size()) * j] << '\t';
+            std::cout << adjMat[i + n * j] << '\t';
         }
 
         std::cout << "\n";
@@ -309,7 +378,11 @@ void ParseData::readData(string data, std::vector<float> &adjMat)
         //std::this_thread::sleep_for(std::chrono::seconds(1));
         int first_entry = std::stoi(line_data.at(0));
         int sec_entry = std::stoi(line_data.at(1));
+
         adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = stof(line_data.at(2));
+        adjMat[(_data_dims.at(0) * (sec_entry - 1)) + (first_entry - 1)] = stof(line_data.at(2));
+        // include the above line if only upper triangle of adjacencies is given
+
         //std::cout << adjMat[_data_dims.at(0)*(line_data.at(0) - 1) + (line_data.at(1) - 1)] << std::endl;
     }
 }
@@ -322,13 +395,11 @@ std::vector<unsigned int> ParseData::getDataDims() const
 #if 0 // Nearest Neighbor
 void initializeMat(vector<signed char> &matA, size_t size_matA)
 {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::bernoulli_distribution d(0.5f);
+    std::bernoulli_distribution d(0.5f);
 
     for (int i = 0; i < matA.size(); i++)
     {
-        bool bern_value = d(gen);
+        bool bern_value = d(rng);
         if (bern_value)
         {
             matA[i] = 1;
@@ -341,9 +412,7 @@ void initializeMat(vector<signed char> &matA, size_t size_matA)
 }
 void updateMat(vector<signed char> &mat, float inv_temp, size_t shift)
 {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_real_distribution<> uniform(0.0f, 1.0f);
+    std::uniform_real_distribution<> uniform(0.0f, 1.0f);
 
     for (int i = 0; i < mat.size(); i++)
     {
@@ -377,11 +446,10 @@ void updateMat(vector<signed char> &mat, float inv_temp, size_t shift)
 
         float acceptance_ratio = exp(-2.0f * inv_temp * nn_sum * lij);
 
-        if (uniform(gen) < acceptance_ratio)
+        if (uniform(rng) < acceptance_ratio)
         {
             mat[i] = -lij;
         }
-
     }
 }
 #endif /* #if 0 */
