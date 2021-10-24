@@ -98,7 +98,6 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 	const float* __restrict__ randvals,
 	signed char* gpuSpins,
 	const unsigned int* gpu_num_spins,
-	float* hamiltonian_per_spin,
 	float* total_energy,
 	curandState * state,
 	unsigned long seed);
@@ -108,7 +107,6 @@ __global__ void final_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjM
        float* gpuLinTermsVect,
        signed char* gpuSpins,
        const unsigned int* gpu_num_spins,
-       float* hamiltonian_per_spin,
        float* total_energy);
 
 __global__ void changeInLocalEnePerSpin(float* gpuAdjMat, unsigned int* gpuAdjMatSize,
@@ -116,11 +114,9 @@ __global__ void changeInLocalEnePerSpin(float* gpuAdjMat, unsigned int* gpuAdjMa
 	const float* __restrict__ randvals,
 	signed char* gpuLatSpin,
 	const unsigned int* gpu_num_spins,
-	float* hamiltonian_per_spin,
 	const float beta,
 	float* total_energy,
-	curandState* globalState,
-    clock_t *timer);
+	curandState* globalState);
   
 __global__ void d_avg_magnetism(signed char* gpuSpins, const unsigned int* gpu_num_spins, float* avg_magnetism);
 
@@ -348,21 +344,12 @@ int main(int argc, char* argv[])
 	signed char *gpu_spins;
 	gpuErrchk(cudaMalloc((void**)&gpu_spins, num_spins * sizeof(*gpu_spins)));
 
-	// Setup spin values
-	float *gpu_hamiltonian_per_spin;
-	gpuErrchk(cudaMalloc((void**)&gpu_hamiltonian_per_spin, num_spins * sizeof(float)));
-
 	std::cout << "initialize spin values " << std::endl;
 	int blocks = (num_spins + THREADS - 1) / THREADS;
 	curandGenerateUniform(rng, gpu_randvals, num_spins);
 	
   //d_debug_kernel<<< 1, 1>>>(gpuAdjMat, gpu_adj_mat_size, gpu_num_spins);
-  
-  /*********************Time Analysis***********************************/
-  clock_t *dtimer = nullptr;
-  clock_t timer[num_spins * 2];
-  gpuErrchk(cudaMalloc((void **)&dtimer, sizeof(clock_t) * num_spins * 2));
-  /*********************End Time Analysis***********************************/
+
 // is a seed for random number generator
 	time_t t;
 	time(&t);
@@ -378,7 +365,6 @@ int main(int argc, char* argv[])
 		gpu_randvals,
 		gpu_spins,
 		gpu_num_spins,
-		gpu_hamiltonian_per_spin,
 		gpu_total_energy,
 		devRanStates,
 		(unsigned long)t);
@@ -435,15 +421,13 @@ int main(int argc, char* argv[])
         cudaEventRecord(start); 
    }
       	changeInLocalEnePerSpin << < num_spins, THREADS >> > (gpuAdjMat, gpu_adj_mat_size,
-				    gpuLinTermsVect,
+				gpuLinTermsVect,
       			gpu_randvals,
       			gpu_spins,
       			gpu_num_spins,
-      			gpu_hamiltonian_per_spin,
       			beta_schedule.at(i),
       			gpu_total_energy,
-      			devRanStates,
-            dtimer);
+      			devRanStates);
                         
     if(debug)
     {
@@ -483,26 +467,11 @@ if(debug)
 		 gpuErrchk(cudaPeekAtLastError());         		 
  	  }
           
-   
-  /*********************Time Analysis***********************************/
-  gpuErrchk(cudaMemcpy(timer, dtimer, sizeof(clock_t) * num_spins * 2, cudaMemcpyDeviceToHost));
   if(debug)
     fprintf(fptr, "Temperature %.6f magnet %.6f \n", 1.f/beta_schedule.at(i),  gpu_avg_magnetism[0]); 
-  clock_t minStart = timer[0];
-  clock_t maxEnd = timer[num_spins];
-/* // To find total time taken to launch the kernel
-    for (int i = 1; i < num_spins; i++)
-    {
-        minStart = timer[i] < minStart ? timer[i] : minStart;
-        maxEnd = timer[num_spins+i] > maxEnd ? timer[num_spins+i] : maxEnd;
-    }
 
- */
- //   printf("Total clocks = %Lf\n", (long double)(maxEnd - minStart));
 
-  /*********************End Time Analysis***********************************/
 	}
-  cudaFree(dtimer);
  
 	auto t1 = std::chrono::high_resolution_clock::now();
 
@@ -535,7 +504,6 @@ if(debug)
                         gpuLinTermsVect,
                         gpu_spins,
                         gpu_num_spins,
-                        gpu_hamiltonian_per_spin,
                         gpu_total_energy);
 
        preprocess_max_cut_from_ising << < num_spins, THREADS >> > (gpuAdjMat,
@@ -553,8 +521,7 @@ if(debug)
 			gpu_best_max_cut_value[0] = std::max(gpu_best_max_cut_value[0], gpu_max_cut_value[0]);
 			gpu_best_plus_one_spin[0] = std::max(gpu_best_plus_one_spin[0], gpu_plus_one_spin[0]);
 			gpu_best_minus_one_spin[0] = std::max(gpu_best_minus_one_spin[0], gpu_minus_one_spin[0]);
-			//		gpu_low_minus_one_spin_check[0] = std::min(gpu_low_minus_one_spin_check[0], gpu_plus_one_spin[0]);
-			printf("cur engy %.1f best engy %.1f curr cut %.1f best cut %.1f with best +1 %d and -1 %d \n", gpu_total_energy[0], gpu_best_energy[0], gpu_max_cut_value[0], gpu_best_max_cut_value[0], gpu_best_plus_one_spin[0], gpu_best_minus_one_spin[0]);
+			printf("cur engy %.1f curr cut %.1f best cut %.1f with best +1 %d and -1 %d \n", gpu_total_energy[0], gpu_max_cut_value[0], gpu_best_max_cut_value[0], gpu_best_plus_one_spin[0], gpu_best_minus_one_spin[0]);
 
  if(debug)
  {
@@ -583,23 +550,19 @@ if(debug)
   //fprintf(fptr1,"\tbest energy value: %.6f\n", gpu_best_energy[0] );
   fprintf(fptr1,"\ttotal energy value: %.6f\n", gpu_total_energy[0] );
   fprintf(fptr1,"\tbest max cut value: %.6f\n", gpu_best_max_cut_value[0]);
-	fprintf(fptr1," \telapsed time in sec: %.6f\n", duration * 1e-6 );
+	// fprintf(fptr1," \telapsed time in sec: %.6f\n", duration * 1e-6 );
   fclose(fptr1);
   
  }
 	std::cout << "\ttotal energy value: " << gpu_total_energy[0] << std::endl;
 	std::cout << "\tbest max cut value: " << gpu_best_max_cut_value[0] << std::endl;
-	std::cout << "\telapsed time in sec: " << duration * 1e-6 << std::endl;
+	// std::cout << "\telapsed time in sec: " << duration * 1e-6 << std::endl;
  
 	cudaFree(gpu_randvals);
 	cudaFree(gpuAdjMat);
 	cudaFree(gpu_adj_mat_size);
 	cudaFree(gpu_num_spins);
-	//cudaFree(gpu_total_energy);
-	//cudaFree(gpu_best_energy);
-	cudaFree(gpu_hamiltonian_per_spin);
 	cudaFree(gpu_spins);
-	//cudaFree(gpu_beta);
 	return 0;
 }
 
@@ -615,11 +578,9 @@ __global__ void changeInLocalEnePerSpin(float* gpuAdjMat, unsigned int* gpuAdjMa
 	const float* __restrict__ randvals,
 	signed char* gpuLatSpin,
 	const unsigned int* gpu_num_spins,
-	float* hamiltonian_per_spin,
 	const float beta,
 	float* total_energy,
-	curandState* globalState,
-    clock_t *timer) {
+	curandState* globalState) {
 
 	unsigned int vertice_Id = blockIdx.x;
 	unsigned int p_Id = threadIdx.x;    //32 worker threads 
@@ -685,7 +646,7 @@ __global__ void changeInLocalEnePerSpin(float* gpuAdjMat, unsigned int* gpuAdjMa
       }
 	}
  
- __threadfence(); // not strictly necessary for the lock, but to make any global updates in the critical section visible to other threads in the grid
+ __threadfence(); 
  __syncthreads();
  if (threadIdx.x == 0)
    release_semaphore(&sem);
@@ -702,7 +663,6 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 	const float* __restrict__ randvals,
 	signed char* gpuSpins,
 	const unsigned int* gpu_num_spins,
-	float* hamiltonian_per_spin,
 	float* total_energy,
 	curandState * state,
 	unsigned long seed) {
@@ -751,7 +711,7 @@ __global__ void init_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjMa
 	{
  
 		float vertice_energy = ((float)gpuSpins[vertice_Id]) * ( sh_mem_spins_Energy[0] - gpuLinTermsVect[vertice_Id] );
-		hamiltonian_per_spin[vertice_Id] = vertice_energy;// each threadblock updates its own memory location
+		// hamiltonian_per_spin[vertice_Id] = vertice_energy;// each threadblock updates its own memory location
 
 //		printf("vertice_energy  %f \n", vertice_energy);
 		atomicAdd(total_energy, vertice_energy);
@@ -765,7 +725,6 @@ __global__ void final_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjM
 	float* gpuLinTermsVect,
 	signed char* gpuSpins,
 	const unsigned int* gpu_num_spins,
-	float* hamiltonian_per_spin,
 	float* total_energy) {
 
 	unsigned int vertice_Id = blockIdx.x; // actual spin id in this threadBlock
@@ -803,7 +762,7 @@ __global__ void final_spins_total_energy(float* gpuAdjMat, unsigned int* gpuAdjM
 	{
 
 		float vertice_energy = ((float)gpuSpins[vertice_Id]) * ( sh_mem_spins_Energy[0] - gpuLinTermsVect[vertice_Id] );
-		hamiltonian_per_spin[vertice_Id] = vertice_energy;// each threadblock updates its own memory location
+		// hamiltonian_per_spin[vertice_Id] = vertice_energy;// each threadblock updates its own memory location
 
 		//printf("vertice_energy  %d %f \n",vertice_Id, vertice_energy);
 		atomicAdd(total_energy, vertice_energy);
@@ -889,15 +848,6 @@ std::vector<double> create_beta_schedule_linear(uint32_t num_sweeps, double beta
 
 __global__ void d_debug_kernel(float* gpuAdjMat, unsigned int* gpuAdjMatSize, signed char* gpu_spins, signed char* gpu_spins_1, const unsigned int* gpu_num_spins)
 {
-	/*		printf("Number of elements %d, number of spins %d \n", gpuAdjMatSize[0], gpu_num_spins[0]);
-			for(int i = 0; i < gpuAdjMatSize[0]; i++)
-			{
-			   if(i%gpu_num_spins[0] == 0)
-				   printf("\n");
-			   printf("%.01f \t", gpuAdjMat[i]);
-			}
-			printf("\n");
-	*/
 	int ones = 0;
 	int ones_1 = 0;
 	for (int i = 0; i < gpu_num_spins[0]; i++)
