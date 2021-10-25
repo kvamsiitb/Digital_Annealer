@@ -516,6 +516,7 @@ if(debug)
   
   			cudaDeviceSynchronize();
        gpuErrchk(cudaMemcpy(cpu_spins, gpu_spins, num_spins * sizeof(*gpu_spins), cudaMemcpyDeviceToHost));
+       gpu_max_cut_value[0] *= -0.5f; 
    }     
         
 			gpu_best_max_cut_value[0] = std::max(gpu_best_max_cut_value[0], gpu_max_cut_value[0]);

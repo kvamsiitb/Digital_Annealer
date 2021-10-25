@@ -4,10 +4,10 @@
 #include <cassert>
 
 /* 0:Serial, 1:Parallel */
-#define PARALLEL 1
+#define PARALLEL 0
 
 /* 0:Standard, 1:Algorithm1, 2:Algorithm2, 3:Metropolis-Hastings */
-#define IMPLEMENTATION 1
+#define IMPLEMENTATION 3
 
 /* 0:InOrder, 1:Random */
 #define RANDOM_SELECTION_SPINS 1
