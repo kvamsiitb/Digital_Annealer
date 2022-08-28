@@ -99,15 +99,29 @@ void ParseData::readData(string data, std::vector<float>& adjMat)
 	}
 	if (line_data.size() == 3)
 	{
-		//std::cout << line_data.size() << std::endl;
+		  //std::cout << line_data.size() << std::endl;
 	    //std::cout << line_data.at(0) <<  " " << line_data.at(1) << " " << line_data.at(2) << std::endl;
-		//std::this_thread::sleep_for(std::chrono::seconds(1));
-		int first_entry= std::stoi(line_data.at(0));
-		int sec_entry = std::stoi(line_data.at(1));
-		
-    adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = stof(line_data.at(2) );
-    adjMat[(_data_dims.at(0) * (sec_entry - 1)) + (first_entry - 1)] = stof(line_data.at(2));   
-		//std::cout << adjMat[_data_dims.at(0)*(line_data.at(0) - 1) + (line_data.at(1) - 1)] << std::endl;
+		  //std::this_thread::sleep_for(std::chrono::seconds(1));
+		  int first_entry= std::stoi(line_data.at(0));
+		  int sec_entry = std::stoi(line_data.at(1));
+        
+      // H = Jij si sj
+      // del H should be this  (Jii si_new si_new + ...) - (Jii si_old si_old + ...)   instead  (Jii si_old si_new + ...) - (Jii si_old si_old + ...)[Wrong]
+      // del H = (Jii 1 + .............)  - (Jii 1 + .............)
+      // As the global memory contains the old value of si (i.e. si_old instead of si_new)
+      // either add if in the kernel [Bad approach thread divergence] 
+      // So just make Jii = 0.f		
+      
+      if(first_entry == sec_entry)
+      {
+          adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = 0.0f;
+      }
+      else
+      {
+        adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = stof(line_data.at(2) );
+        adjMat[(_data_dims.at(0) * (sec_entry - 1)) + (first_entry - 1)] = stof(line_data.at(2));   
+		    //std::cout << adjMat[_data_dims.at(0)*(line_data.at(0) - 1) + (line_data.at(1) - 1)] << std::endl;
+     }
 	}
 }
 

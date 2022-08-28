@@ -378,9 +378,22 @@ void ParseData::readData(string data, std::vector<float> &adjMat)
         //std::this_thread::sleep_for(std::chrono::seconds(1));
         int first_entry = std::stoi(line_data.at(0));
         int sec_entry = std::stoi(line_data.at(1));
-
-        adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = stof(line_data.at(2));
-        adjMat[(_data_dims.at(0) * (sec_entry - 1)) + (first_entry - 1)] = stof(line_data.at(2));
+        
+        // H = Jij si sj
+        // del H should be this  (Jii si_new si_new + ...) - (Jii si_old si_old + ...)   instead  (Jii si_old si_new + ...) - (Jii si_old si_old + ...)[Wrong]
+        // del H = (Jii 1 + .............)  - (Jii 1 + .............)
+        // As the global memory contains the old value of si (i.e. si_old instead of si_new)
+        // either add if in the kernel [Bad approach thread divergence] 
+        // So just make Jii = 0.f
+        if(first_entry == sec_entry)
+        {
+          adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = 0.0f; //stof(line_data.at(2));
+        }
+        else
+        {
+            adjMat[(_data_dims.at(0) * (first_entry - 1)) + (sec_entry - 1)] = stof(line_data.at(2));
+            adjMat[(_data_dims.at(0) * (sec_entry - 1)) + (first_entry - 1)] = stof(line_data.at(2));
+        }
         // include the above line if only upper triangle of adjacencies is given
 
         //std::cout << adjMat[_data_dims.at(0)*(line_data.at(0) - 1) + (line_data.at(1) - 1)] << std::endl;
