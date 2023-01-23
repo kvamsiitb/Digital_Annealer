@@ -183,7 +183,7 @@ int main(int argc, char* argv[])
 {
 
   std::string filename = "";//argv[1]
-  std::string linear_file;
+  std::string linear_file = "";
 
   float start_temp = 20.f;
   float stop_temp = 0.001f;
@@ -256,8 +256,8 @@ int main(int argc, char* argv[])
 	ParseData parseData(filename, adjMat);
 
 	std::vector<float> linearTermsVect;
-	if (linear_file.empty() == false)
-		parseData.readLinearValues(linear_file, linearTermsVect);
+	//if (linear_file.empty() == false)
+	parseData.readLinearValues(linear_file, linearTermsVect);
 
 	double endtime = rtclock();
   
